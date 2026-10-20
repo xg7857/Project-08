@@ -1,0 +1,195 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#define N 50
+#define MAX_E 600
+#define MAX_W 100
+#define REPEAT 20000
+#define INF 1000000000
+
+typedef struct { int u, v, w; } Edge;
+
+typedef struct Node { int vertex, weight; struct Node *next; } Node;
+typedef struct { Node *head[N]; int nodeCount; } AdjList;
+typedef struct { int w[N][N]; } AdjMatrix;
+
+typedef struct { Edge edges[MAX_E]; int count; } Graph;
+
+static int is_connected(const AdjMatrix *m) {
+    int seen[N] = {0}, stack[N], top = 0, cnt = 0;
+    stack[top++] = 0; seen[0] = 1;
+    while (top) {
+        int u = stack[--top];
+        cnt++;
+        for (int v = 0; v < N; v++)
+            if (m->w[u][v] && !seen[v]) { seen[v] = 1; stack[top++] = v; }
+    }
+    return cnt == N;
+}
+
+static void make_graph(Graph *g, int E) {
+    static int used[N][N];
+    for (;;) {
+        memset(used, 0, sizeof(used));
+        g->count = 0;
+        int perm[N];
+        for (int i = 0; i < N; i++) perm[i] = i;
+        for (int i = N - 1; i > 0; i--) {
+            int j = rand() % (i + 1), t = perm[i]; perm[i] = perm[j]; perm[j] = t;
+        }
+        for (int i = 1; i < N; i++) {
+            int u = perm[i], v = perm[rand() % i];
+            used[u][v] = used[v][u] = 1;
+            g->edges[g->count++] = (Edge){u, v, rand() % MAX_W + 1};
+        }
+        while (g->count < E) {
+            int u = rand() % N, v = rand() % N;
+            if (u == v || used[u][v]) continue;
+            used[u][v] = used[v][u] = 1;
+            g->edges[g->count++] = (Edge){u, v, rand() % MAX_W + 1};
+        }
+        AdjMatrix *m = calloc(1, sizeof(AdjMatrix));
+        for (int i = 0; i < g->count; i++)
+            m->w[g->edges[i].u][g->edges[i].v] = m->w[g->edges[i].v][g->edges[i].u] = g->edges[i].w;
+        int ok = is_connected(m);
+        free(m);
+        if (ok) return;
+    }
+}
+
+static void list_push(AdjList *l, int u, int v, int w) {
+    Node *n = malloc(sizeof(Node));
+    n->vertex = v; n->weight = w; n->next = l->head[u]; l->head[u] = n; l->nodeCount++;
+}
+
+static void list_free(AdjList *l) {
+    for (int i = 0; i < N; i++)
+        for (Node *p = l->head[i], *n; p; p = n) { n = p->next; free(p); }
+}
+
+static int cmp_edge(const void *a, const void *b) {
+    return ((const Edge *)a)->w - ((const Edge *)b)->w;
+}
+
+static int uf_find(int *parent, int x) {
+    while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+    return x;
+}
+
+static int kruskal(const AdjList *l, Edge *all, int *parent, int *rnk, Edge *mst) {
+    int cnt = 0;
+    for (int u = 0; u < N; u++)
+        for (Node *p = l->head[u]; p; p = p->next)
+            if (u < p->vertex) all[cnt++] = (Edge){u, p->vertex, p->weight};
+    qsort(all, cnt, sizeof(Edge), cmp_edge);
+    for (int i = 0; i < N; i++) { parent[i] = i; rnk[i] = 0; }
+    int taken = 0, cost = 0;
+    for (int i = 0; i < cnt && taken < N - 1; i++) {
+        int a = uf_find(parent, all[i].u), b = uf_find(parent, all[i].v);
+        if (a == b) continue;
+        if (rnk[a] < rnk[b]) { int t = a; a = b; b = t; }
+        parent[b] = a;
+        if (rnk[a] == rnk[b]) rnk[a]++;
+        mst[taken++] = all[i];
+        cost += all[i].w;
+    }
+    return cost;
+}
+
+static int prim(const AdjMatrix *m, int *key, int *par, int *vis) {
+    for (int i = 0; i < N; i++) { key[i] = INF; par[i] = -1; vis[i] = 0; }
+    key[0] = 0;
+    int cost = 0;
+    for (int it = 0; it < N; it++) {
+        int u = -1;
+        for (int v = 0; v < N; v++)
+            if (!vis[v] && (u == -1 || key[v] < key[u])) u = v;
+        vis[u] = 1;
+        cost += key[u];
+        for (int v = 0; v < N; v++)
+            if (m->w[u][v] && !vis[v] && m->w[u][v] < key[v]) { key[v] = m->w[u][v]; par[v] = u; }
+    }
+    return cost;
+}
+
+static void print_edges(const Edge *e, int n) {
+    for (int i = 0; i < n; i++) {
+        printf("(%d-%d:%d)%s", e[i].u, e[i].v, e[i].w, (i % 7 == 6 || i == n - 1) ? "\n" : " ");
+    }
+}
+
+static int run_kruskal(const char *name, const Graph *g, int E) {
+    AdjList *l = calloc(1, sizeof(AdjList));
+    for (int i = 0; i < g->count; i++) {
+        list_push(l, g->edges[i].u, g->edges[i].v, g->edges[i].w);
+        list_push(l, g->edges[i].v, g->edges[i].u, g->edges[i].w);
+    }
+    Edge all[MAX_E], mst[N - 1];
+    int parent[N], rnk[N];
+
+    long long sink = 0;
+    clock_t t0 = clock();
+    for (int r = 0; r < REPEAT; r++) sink += kruskal(l, all, parent, rnk, mst);
+    clock_t t1 = clock();
+    double ms = (double)(t1 - t0) * 1000.0 / CLOCKS_PER_SEC / REPEAT;
+
+    int cost = kruskal(l, all, parent, rnk, mst);
+    size_t mem = sizeof(AdjList) + (size_t)l->nodeCount * sizeof(Node)
+               + (size_t)E * sizeof(Edge) + sizeof(parent) + sizeof(rnk) + sizeof(mst);
+
+    printf("%s\nVertices      : %d\nEdges         : %d\nMST Edges     : %d\nMST Cost      : %d\n", name, N, E, N - 1, cost);
+    printf("Memory        : %zu Bytes\nExecution Time: %.6f ms\n", mem, ms);
+    print_edges(mst, N - 1);
+    printf("\n");
+    list_free(l);
+    free(l);
+    (void)sink;
+    return cost;
+}
+
+static int run_prim(const char *name, const Graph *g, int E) {
+    AdjMatrix *m = calloc(1, sizeof(AdjMatrix));
+    for (int i = 0; i < g->count; i++)
+        m->w[g->edges[i].u][g->edges[i].v] = m->w[g->edges[i].v][g->edges[i].u] = g->edges[i].w;
+    int key[N], par[N], vis[N];
+
+    long long sink = 0;
+    clock_t t0 = clock();
+    for (int r = 0; r < REPEAT; r++) sink += prim(m, key, par, vis);
+    clock_t t1 = clock();
+    double ms = (double)(t1 - t0) * 1000.0 / CLOCKS_PER_SEC / REPEAT;
+
+    int cost = prim(m, key, par, vis);
+    size_t mem = sizeof(AdjMatrix) + sizeof(key) + sizeof(par) + sizeof(vis);
+
+    Edge mst[N - 1];
+    int c = 0;
+    for (int v = 0; v < N; v++)
+        if (par[v] != -1) mst[c++] = (Edge){par[v], v, key[v]};
+
+    printf("%s\nVertices      : %d\nEdges         : %d\nMST Edges     : %d\nMST Cost      : %d\n", name, N, E, c, cost);
+    printf("Memory        : %zu Bytes\nExecution Time: %.6f ms\n", mem, ms);
+    print_edges(mst, c);
+    printf("\n");
+    free(m);
+    (void)sink;
+    return cost;
+}
+
+int main(void) {
+    static Graph sparse, dense;
+    srand(2026);
+    make_graph(&sparse, 100);
+    make_graph(&dense, 600);
+
+    int c1 = run_kruskal("Case 1 : Sparse Graph - Adjacency List - Kruskal", &sparse, 100);
+    int c2 = run_kruskal("Case 2 : Dense Graph - Adjacency List - Kruskal", &dense, 600);
+    int c3 = run_prim("Case 3 : Sparse Graph - Adjacency Matrix - Prim", &sparse, 100);
+    int c4 = run_prim("Case 4 : Dense Graph - Adjacency Matrix - Prim", &dense, 600);
+
+    printf("Sparse cost match (Kruskal vs Prim): %s\n", c1 == c3 ? "OK" : "MISMATCH");
+    printf("Dense  cost match (Kruskal vs Prim): %s\n", c2 == c4 ? "OK" : "MISMATCH");
+    return 0;
+}
